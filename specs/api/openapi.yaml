@@ -1,0 +1,1822 @@
+openapi: 3.1.0
+
+info:
+  title: CRM API
+  version: 0.1.0
+  description: |
+    REST API for the Spec-Driven CRM project.
+
+    **Auth**: All endpoints require `Authorization: Bearer <token>` unless marked `[public]`.
+    **Envelope**: Single records return `{ "data": {...} }`. Lists return `{ "data": [...], "pagination": {...} }`.
+    **Errors**: All errors return `{ "error": "CODE", "message": "...", "details": [] }`.
+    **Tenant**: All data is scoped by `organizationId` extracted from the JWT — never passed in the request.
+    **Soft delete**: DELETE endpoints set `deletedAt`; records are never hard-deleted.
+
+servers:
+  - url: http://localhost:3000
+    description: Local development
+  - url: https://api.your-crm.com
+    description: Production
+
+security:
+  - bearerAuth: []
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMPONENTS
+# ─────────────────────────────────────────────────────────────────────────────
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  # ── Reusable parameters ────────────────────────────────────────────────────
+
+  parameters:
+    id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    page:
+      name: page
+      in: query
+      schema: { type: integer, default: 1, minimum: 1 }
+      description: Page number
+    limit:
+      name: limit
+      in: query
+      schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+      description: Items per page
+    sort:
+      name: sort
+      in: query
+      schema: { type: string, default: createdAt }
+      description: Field to sort by
+    order:
+      name: order
+      in: query
+      schema: { type: string, enum: [asc, desc], default: desc }
+      description: Sort direction
+    search:
+      name: search
+      in: query
+      schema: { type: string }
+      description: Full-text search across name / title fields
+    ownerId:
+      name: ownerId
+      in: query
+      schema: { type: string, format: uuid }
+      description: Filter by owner (manager / admin only)
+
+  # ── Shared schemas ─────────────────────────────────────────────────────────
+
+  schemas:
+
+    # ── Primitives ──────────────────────────────────────────────────────────
+
+    Pagination:
+      type: object
+      properties:
+        page: { type: integer, example: 1 }
+        limit: { type: integer, example: 20 }
+        total: { type: integer, example: 142 }
+        totalPages: { type: integer, example: 8 }
+
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error: { type: string, example: NOT_FOUND }
+        message: { type: string, example: Contact not found. }
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              message: { type: string }
+
+    # ── Auth ────────────────────────────────────────────────────────────────
+
+    UserProfile:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        name: { type: string, example: Sam Lee }
+        email: { type: string, format: email }
+        role: { type: string, enum: [admin, manager, sales_rep] }
+        avatarUrl: { type: string, nullable: true }
+        isActive: { type: boolean }
+        lastLoginAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    AuthResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            token: { type: string, description: JWT access token }
+            user: { $ref: '#/components/schemas/UserProfile' }
+
+    # ── Users ───────────────────────────────────────────────────────────────
+
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string, format: email }
+        role: { type: string, enum: [admin, manager, sales_rep] }
+        avatarUrl: { type: string, nullable: true }
+        isActive: { type: boolean }
+        invitedBy: { type: string, format: uuid, nullable: true }
+        inviteAcceptedAt: { type: string, format: date-time, nullable: true }
+        lastLoginAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    InviteUserRequest:
+      type: object
+      required: [email, role]
+      properties:
+        email: { type: string, format: email }
+        role: { type: string, enum: [admin, manager, sales_rep] }
+        name: { type: string }
+
+    AcceptInviteRequest:
+      type: object
+      required: [token, name, password]
+      properties:
+        token: { type: string }
+        name: { type: string, minLength: 1 }
+        password: { type: string, minLength: 8 }
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        name: { type: string }
+        role: { type: string, enum: [admin, manager, sales_rep] }
+        isActive: { type: boolean }
+        avatarUrl: { type: string }
+
+    # ── Contacts ────────────────────────────────────────────────────────────
+
+    Contact:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        ownerId: { type: string, format: uuid }
+        companyId: { type: string, format: uuid, nullable: true }
+        firstName: { type: string }
+        lastName: { type: string }
+        email: { type: string, format: email, nullable: true }
+        phone: { type: string, nullable: true }
+        jobTitle: { type: string, nullable: true }
+        linkedinUrl: { type: string, nullable: true }
+        source: { type: string, enum: [manual, import, web_form, api, lead_conversion] }
+        companyName: { type: string, nullable: true, description: Eagerly loaded from company }
+        ownerName: { type: string, description: Eagerly loaded from user }
+        createdBy: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    CreateContactRequest:
+      type: object
+      required: [firstName, lastName]
+      properties:
+        firstName: { type: string, minLength: 1, maxLength: 255 }
+        lastName: { type: string, minLength: 1, maxLength: 255 }
+        email: { type: string, format: email }
+        phone: { type: string, maxLength: 50 }
+        jobTitle: { type: string, maxLength: 255 }
+        linkedinUrl: { type: string, format: uri }
+        companyId: { type: string, format: uuid }
+        ownerId: { type: string, format: uuid, description: Defaults to the requesting user }
+
+    UpdateContactRequest:
+      type: object
+      properties:
+        firstName: { type: string, minLength: 1, maxLength: 255 }
+        lastName: { type: string, minLength: 1, maxLength: 255 }
+        email: { type: string, format: email }
+        phone: { type: string, maxLength: 50 }
+        jobTitle: { type: string, maxLength: 255 }
+        linkedinUrl: { type: string, format: uri }
+        companyId: { type: string, format: uuid, nullable: true }
+        ownerId: { type: string, format: uuid, description: Manager/admin only }
+
+    # ── Companies ───────────────────────────────────────────────────────────
+
+    Company:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        ownerId: { type: string, format: uuid }
+        name: { type: string }
+        domain: { type: string, nullable: true }
+        industry: { type: string, nullable: true }
+        employeeCount: { type: integer, nullable: true }
+        annualRevenue: { type: number, nullable: true }
+        country: { type: string, nullable: true }
+        city: { type: string, nullable: true }
+        address: { type: string, nullable: true }
+        website: { type: string, nullable: true }
+        contactCount: { type: integer, description: Eagerly loaded }
+        ownerName: { type: string, description: Eagerly loaded }
+        createdBy: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    CreateCompanyRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        domain: { type: string }
+        industry: { type: string }
+        employeeCount: { type: integer, minimum: 0 }
+        annualRevenue: { type: number, minimum: 0 }
+        country: { type: string }
+        city: { type: string }
+        address: { type: string }
+        website: { type: string, format: uri }
+        ownerId: { type: string, format: uuid }
+
+    UpdateCompanyRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        domain: { type: string }
+        industry: { type: string }
+        employeeCount: { type: integer, minimum: 0 }
+        annualRevenue: { type: number, minimum: 0 }
+        country: { type: string }
+        city: { type: string }
+        address: { type: string }
+        website: { type: string, format: uri }
+        ownerId: { type: string, format: uuid, description: Manager/admin only }
+
+    # ── Leads ────────────────────────────────────────────────────────────────
+
+    Lead:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        ownerId: { type: string, format: uuid }
+        contactId: { type: string, format: uuid, nullable: true }
+        companyId: { type: string, format: uuid, nullable: true }
+        title: { type: string }
+        value: { type: number, example: 5000.00 }
+        status: { type: string, enum: [new, contacted, qualified, disqualified, converted] }
+        source: { type: string, enum: [manual, import, web_form, api, referral, other] }
+        expectedCloseDate: { type: string, format: date, nullable: true }
+        convertedDealId: { type: string, format: uuid, nullable: true }
+        convertedAt: { type: string, format: date-time, nullable: true }
+        contactName: { type: string, nullable: true, description: Eagerly loaded }
+        companyName: { type: string, nullable: true, description: Eagerly loaded }
+        ownerName: { type: string, description: Eagerly loaded }
+        createdBy: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    CreateLeadRequest:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 255 }
+        value: { type: number, minimum: 0, default: 0 }
+        source: { type: string, enum: [manual, import, web_form, api, referral, other], default: manual }
+        contactId: { type: string, format: uuid }
+        companyId: { type: string, format: uuid }
+        expectedCloseDate: { type: string, format: date }
+        ownerId: { type: string, format: uuid, description: Defaults to requesting user }
+
+    UpdateLeadRequest:
+      type: object
+      properties:
+        title: { type: string, minLength: 1, maxLength: 255 }
+        value: { type: number, minimum: 0 }
+        status: { type: string, enum: [new, contacted, qualified, disqualified] }
+        source: { type: string, enum: [manual, import, web_form, api, referral, other] }
+        contactId: { type: string, format: uuid, nullable: true }
+        companyId: { type: string, format: uuid, nullable: true }
+        expectedCloseDate: { type: string, format: date, nullable: true }
+        ownerId: { type: string, format: uuid, description: Manager/admin only }
+
+    ConvertLeadRequest:
+      type: object
+      required: [stageId]
+      properties:
+        stageId: { type: string, format: uuid, description: Pipeline stage to place the new deal in }
+        dealTitle: { type: string, description: Defaults to the lead title }
+        dealValue: { type: number, description: Defaults to the lead value }
+        expectedCloseDate: { type: string, format: date }
+        createContact: { type: boolean, default: false, description: Create a Contact from lead data if not already linked }
+        createCompany: { type: boolean, default: false, description: Create a Company from lead data if not already linked }
+
+    # ── Pipelines ────────────────────────────────────────────────────────────
+
+    Pipeline:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        name: { type: string }
+        isDefault: { type: boolean }
+        displayOrder: { type: integer }
+        stages:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineStage' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    PipelineStage:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        pipelineId: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        name: { type: string }
+        displayOrder: { type: integer }
+        probability: { type: integer, minimum: 0, maximum: 100 }
+        dealCount: { type: integer, description: Open deals in this stage — eagerly loaded }
+        dealValue: { type: number, description: Total value of open deals — eagerly loaded }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    CreatePipelineStageRequest:
+      type: object
+      required: [name, displayOrder]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        displayOrder: { type: integer, minimum: 0 }
+        probability: { type: integer, minimum: 0, maximum: 100, default: 0 }
+
+    UpdatePipelineStageRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        displayOrder: { type: integer, minimum: 0 }
+        probability: { type: integer, minimum: 0, maximum: 100 }
+
+    ReorderStagesRequest:
+      type: object
+      required: [stageIds]
+      properties:
+        stageIds:
+          type: array
+          items: { type: string, format: uuid }
+          description: Stage IDs in the desired display order
+
+    # ── Deals ────────────────────────────────────────────────────────────────
+
+    Deal:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        pipelineId: { type: string, format: uuid }
+        stageId: { type: string, format: uuid }
+        ownerId: { type: string, format: uuid }
+        contactId: { type: string, format: uuid }
+        companyId: { type: string, format: uuid, nullable: true }
+        leadId: { type: string, format: uuid, nullable: true }
+        title: { type: string }
+        value: { type: number }
+        status: { type: string, enum: [open, won, lost] }
+        lostReason: { type: string, nullable: true }
+        expectedCloseDate: { type: string, format: date, nullable: true }
+        wonAt: { type: string, format: date-time, nullable: true }
+        lostAt: { type: string, format: date-time, nullable: true }
+        stageName: { type: string, description: Eagerly loaded }
+        contactName: { type: string, description: Eagerly loaded }
+        companyName: { type: string, nullable: true, description: Eagerly loaded }
+        ownerName: { type: string, description: Eagerly loaded }
+        createdBy: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    CreateDealRequest:
+      type: object
+      required: [title, contactId, stageId]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 255 }
+        contactId: { type: string, format: uuid }
+        stageId: { type: string, format: uuid }
+        companyId: { type: string, format: uuid }
+        value: { type: number, minimum: 0, default: 0 }
+        expectedCloseDate: { type: string, format: date }
+        ownerId: { type: string, format: uuid, description: Defaults to requesting user }
+
+    UpdateDealRequest:
+      type: object
+      properties:
+        title: { type: string, minLength: 1, maxLength: 255 }
+        stageId: { type: string, format: uuid }
+        contactId: { type: string, format: uuid }
+        companyId: { type: string, format: uuid, nullable: true }
+        value: { type: number, minimum: 0 }
+        expectedCloseDate: { type: string, format: date, nullable: true }
+        ownerId: { type: string, format: uuid, description: Manager/admin only }
+
+    MarkDealLostRequest:
+      type: object
+      required: [lostReason]
+      properties:
+        lostReason: { type: string, minLength: 1, maxLength: 500 }
+
+    # ── Activities ───────────────────────────────────────────────────────────
+
+    Activity:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        ownerId: { type: string, format: uuid }
+        dealId: { type: string, format: uuid, nullable: true }
+        contactId: { type: string, format: uuid, nullable: true }
+        companyId: { type: string, format: uuid, nullable: true }
+        leadId: { type: string, format: uuid, nullable: true }
+        type: { type: string, enum: [call, email, meeting, demo, lunch, other] }
+        subject: { type: string }
+        note: { type: string, nullable: true }
+        outcome: { type: string, nullable: true }
+        done: { type: boolean }
+        doneAt: { type: string, format: date-time, nullable: true }
+        dueDate: { type: string, format: date, nullable: true }
+        dueTime: { type: string, pattern: '^[0-2]\d:[0-5]\d$', nullable: true }
+        durationMinutes: { type: integer, minimum: 1, nullable: true }
+        ownerName: { type: string, description: Eagerly loaded }
+        dealTitle: { type: string, nullable: true, description: Eagerly loaded }
+        contactName: { type: string, nullable: true, description: Eagerly loaded }
+        createdBy: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    CreateActivityRequest:
+      type: object
+      required: [type, subject]
+      properties:
+        type: { type: string, enum: [call, email, meeting, demo, lunch, other] }
+        subject: { type: string, minLength: 1, maxLength: 255 }
+        note: { type: string }
+        outcome: { type: string, maxLength: 500 }
+        done: { type: boolean, default: false }
+        doneAt: { type: string, format: date-time, description: Defaults to now when done is true }
+        dueDate: { type: string, format: date, description: Required when done is false }
+        dueTime: { type: string, pattern: '^[0-2]\d:[0-5]\d$' }
+        durationMinutes: { type: integer, minimum: 1 }
+        dealId: { type: string, format: uuid }
+        contactId: { type: string, format: uuid }
+        companyId: { type: string, format: uuid }
+        leadId: { type: string, format: uuid }
+        ownerId: { type: string, format: uuid, description: Defaults to requesting user }
+
+    UpdateActivityRequest:
+      type: object
+      properties:
+        type: { type: string, enum: [call, email, meeting, demo, lunch, other] }
+        subject: { type: string, minLength: 1, maxLength: 255 }
+        note: { type: string }
+        outcome: { type: string, maxLength: 500 }
+        dueDate: { type: string, format: date }
+        dueTime: { type: string, pattern: '^[0-2]\d:[0-5]\d$' }
+        durationMinutes: { type: integer, minimum: 1 }
+        dealId: { type: string, format: uuid, nullable: true }
+        contactId: { type: string, format: uuid, nullable: true }
+        companyId: { type: string, format: uuid, nullable: true }
+        leadId: { type: string, format: uuid, nullable: true }
+
+    # ── Notes ────────────────────────────────────────────────────────────────
+
+    Note:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        authorId: { type: string, format: uuid }
+        dealId: { type: string, format: uuid, nullable: true }
+        contactId: { type: string, format: uuid, nullable: true }
+        companyId: { type: string, format: uuid, nullable: true }
+        leadId: { type: string, format: uuid, nullable: true }
+        content: { type: string }
+        isPinned: { type: boolean }
+        authorName: { type: string, description: Eagerly loaded }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    CreateNoteRequest:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string, minLength: 1 }
+        isPinned: { type: boolean, default: false }
+        dealId: { type: string, format: uuid }
+        contactId: { type: string, format: uuid }
+        companyId: { type: string, format: uuid }
+        leadId: { type: string, format: uuid }
+
+    UpdateNoteRequest:
+      type: object
+      properties:
+        content: { type: string, minLength: 1 }
+        isPinned: { type: boolean }
+
+    # ── Reports ──────────────────────────────────────────────────────────────
+
+    DealsSummaryReport:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            won: { type: object, properties: { count: { type: integer }, totalValue: { type: number } } }
+            lost: { type: object, properties: { count: { type: integer }, totalValue: { type: number } } }
+            open: { type: object, properties: { count: { type: integer }, totalValue: { type: number } } }
+            byOwner:
+              type: array
+              items:
+                type: object
+                properties:
+                  ownerId: { type: string, format: uuid }
+                  ownerName: { type: string }
+                  wonCount: { type: integer }
+                  wonValue: { type: number }
+                  lostCount: { type: integer }
+                  openCount: { type: integer }
+
+    PipelineValueReport:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              stageId: { type: string, format: uuid }
+              stageName: { type: string }
+              displayOrder: { type: integer }
+              dealCount: { type: integer }
+              totalValue: { type: number }
+              weightedValue: { type: number, description: totalValue * (probability / 100) }
+
+    ActivitiesSummaryReport:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              ownerId: { type: string, format: uuid }
+              ownerName: { type: string }
+              total: { type: integer }
+              byType:
+                type: object
+                properties:
+                  call: { type: integer }
+                  email: { type: integer }
+                  meeting: { type: integer }
+                  demo: { type: integer }
+                  lunch: { type: integer }
+                  other: { type: integer }
+
+    LeadsBySourceReport:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              source: { type: string }
+              total: { type: integer }
+              converted: { type: integer }
+              conversionRate: { type: number, description: converted / total as percentage }
+
+  # ── Reusable responses ──────────────────────────────────────────────────────
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: UNAUTHORIZED, message: Invalid or expired token. }
+    Forbidden:
+      description: Insufficient permissions for this role
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: FORBIDDEN, message: You do not have permission to perform this action. }
+    NotFound:
+      description: Resource not found in this organisation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: NOT_FOUND, message: Resource not found. }
+    ValidationError:
+      description: Request body failed Zod validation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error: VALIDATION_ERROR
+            message: Invalid request data.
+            details:
+              - { field: email, message: Invalid email address. }
+    Conflict:
+      description: Unique constraint violation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: CONFLICT, message: A record with this value already exists. }
+    NoContent:
+      description: Success — no body returned
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PATHS
+# ─────────────────────────────────────────────────────────────────────────────
+
+paths:
+
+  # ─── AUTH ──────────────────────────────────────────────────────────────────
+
+  /api/auth/signup:
+    post:
+      tags: [Auth]
+      summary: Create a new organisation and admin user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password, organizationName]
+              properties:
+                organizationName: { type: string, minLength: 1, maxLength: 255 }
+                name: { type: string, minLength: 1 }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+      responses:
+        '201':
+          description: Organisation and admin user created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in and receive a JWT
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      summary: Get the currently authenticated user
+      responses:
+        '200':
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/UserProfile' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Log out (client-side token removal confirmation)
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/auth/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Request a password reset email
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '204':
+          description: Reset email sent (always 204 — never reveals if email exists)
+
+  /api/auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: Reset password using a token from email
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token: { type: string }
+                password: { type: string, minLength: 8 }
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401':
+          description: Token invalid or expired
+
+  /api/auth/accept-invite:
+    post:
+      tags: [Auth]
+      summary: Accept a team invite and set password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AcceptInviteRequest' }
+      responses:
+        '200':
+          description: Invite accepted — returns token and user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401':
+          description: Invite token invalid or expired
+
+  # ─── USERS ─────────────────────────────────────────────────────────────────
+
+  /api/users:
+    get:
+      tags: [Users]
+      summary: List all users in the organisation (admin / manager)
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/search'
+        - name: role
+          in: query
+          schema: { type: string, enum: [admin, manager, sales_rep] }
+        - name: isActive
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Paginated user list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/User' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/users/invite:
+    post:
+      tags: [Users]
+      summary: Invite a new team member (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InviteUserRequest' }
+      responses:
+        '201':
+          description: Invite sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/users/{id}:
+    parameters:
+      - $ref: '#/components/parameters/id'
+    get:
+      tags: [Users]
+      summary: Get a user by ID
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Users]
+      summary: Update a user (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateUserRequest' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Cannot deactivate the last admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: LAST_ADMIN, message: Cannot deactivate the last admin in the organisation. }
+
+  # ─── CONTACTS ──────────────────────────────────────────────────────────────
+
+  /api/contacts:
+    get:
+      tags: [Contacts]
+      summary: List contacts (sales rep sees own; manager/admin sees all)
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/order'
+        - $ref: '#/components/parameters/search'
+        - $ref: '#/components/parameters/ownerId'
+        - name: companyId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Contact' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Contacts]
+      summary: Create a contact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateContactRequest' }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Contact' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/contacts/{id}:
+    parameters:
+      - $ref: '#/components/parameters/id'
+    get:
+      tags: [Contacts]
+      summary: Get a contact with related deals, activities, and notes
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/Contact'
+                      - type: object
+                        properties:
+                          deals:
+                            type: array
+                            items: { $ref: '#/components/schemas/Deal' }
+                          activities:
+                            type: array
+                            items: { $ref: '#/components/schemas/Activity' }
+                          notes:
+                            type: array
+                            items: { $ref: '#/components/schemas/Note' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Contacts]
+      summary: Update a contact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateContactRequest' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Contact' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [Contacts]
+      summary: Soft-delete a contact (admin only)
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ─── COMPANIES ─────────────────────────────────────────────────────────────
+
+  /api/companies:
+    get:
+      tags: [Companies]
+      summary: List companies
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/order'
+        - $ref: '#/components/parameters/search'
+        - $ref: '#/components/parameters/ownerId'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Company' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Companies]
+      summary: Create a company
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCompanyRequest' }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Company' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/companies/{id}:
+    parameters:
+      - $ref: '#/components/parameters/id'
+    get:
+      tags: [Companies]
+      summary: Get a company with related contacts, deals, and activities
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/Company'
+                      - type: object
+                        properties:
+                          contacts:
+                            type: array
+                            items: { $ref: '#/components/schemas/Contact' }
+                          deals:
+                            type: array
+                            items: { $ref: '#/components/schemas/Deal' }
+                          activities:
+                            type: array
+                            items: { $ref: '#/components/schemas/Activity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Companies]
+      summary: Update a company
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateCompanyRequest' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Company' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [Companies]
+      summary: Soft-delete a company (admin only)
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ─── LEADS ─────────────────────────────────────────────────────────────────
+
+  /api/leads:
+    get:
+      tags: [Leads]
+      summary: List leads (sales rep sees own; manager/admin sees all)
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/order'
+        - $ref: '#/components/parameters/search'
+        - $ref: '#/components/parameters/ownerId'
+        - name: status
+          in: query
+          schema: { type: string, enum: [new, contacted, qualified, disqualified, converted] }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Lead' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Leads]
+      summary: Create a lead
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateLeadRequest' }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Lead' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/leads/{id}:
+    parameters:
+      - $ref: '#/components/parameters/id'
+    get:
+      tags: [Leads]
+      summary: Get a lead with related activities and notes
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/Lead'
+                      - type: object
+                        properties:
+                          activities:
+                            type: array
+                            items: { $ref: '#/components/schemas/Activity' }
+                          notes:
+                            type: array
+                            items: { $ref: '#/components/schemas/Note' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Leads]
+      summary: Update a lead
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateLeadRequest' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Lead' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Leads]
+      summary: Soft-delete a lead (admin only)
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/leads/{id}/convert:
+    parameters:
+      - $ref: '#/components/parameters/id'
+    post:
+      tags: [Leads]
+      summary: Convert a lead to a deal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConvertLeadRequest' }
+      responses:
+        '201':
+          description: Deal created from lead
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      deal: { $ref: '#/components/schemas/Deal' }
+                      lead: { $ref: '#/components/schemas/Lead' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Lead already converted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ALREADY_CONVERTED, message: This lead has already been converted. }
+
+  # ─── PIPELINES ─────────────────────────────────────────────────────────────
+
+  /api/pipelines:
+    get:
+      tags: [Pipelines]
+      summary: List all pipelines with their stages
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Pipeline' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/pipelines/{id}:
+    parameters:
+      - $ref: '#/components/parameters/id'
+    get:
+      tags: [Pipelines]
+      summary: Get a pipeline with stages and deal counts per stage
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Pipeline' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/pipelines/{id}/stages:
+    parameters:
+      - $ref: '#/components/parameters/id'
+    post:
+      tags: [Pipelines]
+      summary: Add a stage to a pipeline (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePipelineStageRequest' }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PipelineStage' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/pipeline-stages/reorder:
+    put:
+      tags: [Pipelines]
+      summary: Reorder stages within a pipeline (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReorderStagesRequest' }
+      responses:
+        '200':
+          description: Stages with updated display_order
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/PipelineStage' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/pipeline-stages/{id}:
+    parameters:
+      - $ref: '#/components/parameters/id'
+    put:
+      tags: [Pipelines]
+      summary: Update a pipeline stage name or probability (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdatePipelineStageRequest' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PipelineStage' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Pipelines]
+      summary: Soft-delete a pipeline stage (admin only — blocked if open deals exist)
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Stage has open deals
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: STAGE_HAS_DEALS, message: Cannot delete a stage with open deals. Move or close them first. }
+
+  # ─── DEALS ─────────────────────────────────────────────────────────────────
+
+  /api/deals:
+    get:
+      tags: [Deals]
+      summary: List deals (sales rep sees own; manager/admin sees all)
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/order'
+        - $ref: '#/components/parameters/search'
+        - $ref: '#/components/parameters/ownerId'
+        - name: status
+          in: query
+          schema: { type: string, enum: [open, won, lost] }
+        - name: stageId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Deal' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Deals]
+      summary: Create a deal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDealRequest' }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Deal' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/deals/{id}:
+    parameters:
+      - $ref: '#/components/parameters/id'
+    get:
+      tags: [Deals]
+      summary: Get a deal with activities, notes, and stage history
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/Deal'
+                      - type: object
+                        properties:
+                          activities:
+                            type: array
+                            items: { $ref: '#/components/schemas/Activity' }
+                          notes:
+                            type: array
+                            items: { $ref: '#/components/schemas/Note' }
+                          stageHistory:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                fromStage: { type: string }
+                                toStage: { type: string }
+                                movedAt: { type: string, format: date-time }
+                                movedBy: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Deals]
+      summary: Update a deal (title, stage, value, contact, close date)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateDealRequest' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Deal' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Deals]
+      summary: Soft-delete a deal (admin only)
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/deals/{id}/won:
+    parameters:
+      - $ref: '#/components/parameters/id'
+    post:
+      tags: [Deals]
+      summary: Mark a deal as Won
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Deal' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Deal is already closed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: DEAL_ALREADY_CLOSED, message: This deal is already closed. }
+
+  /api/deals/{id}/lost:
+    parameters:
+      - $ref: '#/components/parameters/id'
+    post:
+      tags: [Deals]
+      summary: Mark a deal as Lost (requires a reason)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MarkDealLostRequest' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Deal' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Deal is already closed
+
+  # ─── ACTIVITIES ────────────────────────────────────────────────────────────
+
+  /api/activities:
+    get:
+      tags: [Activities]
+      summary: List activities and tasks
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/sort'
+        - $ref: '#/components/parameters/order'
+        - $ref: '#/components/parameters/ownerId'
+        - name: done
+          in: query
+          schema: { type: boolean }
+          description: true = logged activities, false = pending tasks
+        - name: dealId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: contactId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: type
+          in: query
+          schema: { type: string, enum: [call, email, meeting, demo, lunch, other] }
+        - name: overdue
+          in: query
+          schema: { type: boolean }
+          description: Filter to tasks with due_date in the past
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Activity' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Activities]
+      summary: Log an activity or schedule a task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateActivityRequest' }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Activity' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/activities/{id}:
+    parameters:
+      - $ref: '#/components/parameters/id'
+    get:
+      tags: [Activities]
+      summary: Get an activity by ID
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Activity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Activities]
+      summary: Update an activity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateActivityRequest' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Activity' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Activities]
+      summary: Soft-delete an activity (admin only)
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/activities/{id}/done:
+    parameters:
+      - $ref: '#/components/parameters/id'
+    put:
+      tags: [Activities]
+      summary: Mark a task as done
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                outcome: { type: string, maxLength: 500 }
+                doneAt: { type: string, format: date-time, description: Defaults to now }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Activity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Activity is already marked done
+
+  # ─── NOTES ─────────────────────────────────────────────────────────────────
+
+  /api/notes:
+    get:
+      tags: [Notes]
+      summary: List notes filtered by record type
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/limit'
+        - name: dealId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: contactId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: companyId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: leadId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Note' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Notes]
+      summary: Add a note to a record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateNoteRequest' }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Note' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/notes/{id}:
+    parameters:
+      - $ref: '#/components/parameters/id'
+    put:
+      tags: [Notes]
+      summary: Update a note (author or admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateNoteRequest' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Note' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Notes]
+      summary: Soft-delete a note (author or admin only)
+      responses:
+        '204': { $ref: '#/components/responses/NoContent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ─── REPORTS ───────────────────────────────────────────────────────────────
+
+  /api/reports/deals-summary:
+    get:
+      tags: [Reports]
+      summary: Won/lost deal counts and values by period (manager / admin only)
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { type: string, format: date }
+          description: Start of date range (inclusive)
+        - name: to
+          in: query
+          required: true
+          schema: { type: string, format: date }
+          description: End of date range (inclusive)
+        - $ref: '#/components/parameters/ownerId'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DealsSummaryReport' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/reports/pipeline-value:
+    get:
+      tags: [Reports]
+      summary: Total and weighted deal value by pipeline stage (manager / admin only)
+      parameters:
+        - $ref: '#/components/parameters/ownerId'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineValueReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/reports/activities-summary:
+    get:
+      tags: [Reports]
+      summary: Activity counts per rep and type by period (manager / admin only)
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          required: true
+          schema: { type: string, format: date }
+        - $ref: '#/components/parameters/ownerId'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActivitiesSummaryReport' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/reports/leads-by-source:
+    get:
+      tags: [Reports]
+      summary: Lead count and conversion rate by source (manager / admin only)
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LeadsBySourceReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }

@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "metaswarm",
+  "project_id": "7f84d38e-249d-4955-bef8-021bc172e2ec"
+}

@@ -1,0 +1,75 @@
+{
+  "version": "1.0",
+  "project": {
+    "name": "CRM — Spec-Driven Development",
+    "type": "typescript-monorepo",
+    "description": "Learning project proving the Spec-Driven Development (SDD) framework with a CRM sample application",
+    "workflow": "spec-driven-development"
+  },
+  "stack": {
+    "language": "typescript",
+    "backend": {
+      "framework": "fastify@4",
+      "orm": "drizzle",
+      "database": "neon-postgresql",
+      "auth": "jwt-24h"
+    },
+    "frontend": {
+      "framework": "react@18",
+      "bundler": "vite",
+      "queryLibrary": "tanstack-query@5",
+      "forms": "react-hook-form",
+      "validation": "zod",
+      "ui": "@mui/material@5",
+      "styling": "emotion"
+    },
+    "testing": {
+      "unit": "vitest",
+      "integration": "vitest",
+      "e2e": "playwright"
+    }
+  },
+  "coverage": {
+    "enforce": false,
+    "threshold": null
+  },
+  "review": {
+    "externalTools": ["codex"],
+    "adversarialReview": true,
+    "requiredApprovers": ["metaswarm:architect-agent", "metaswarm:security-design-agent", "metaswarm:code-review-agent"]
+  },
+  "ci": {
+    "enabled": false,
+    "provider": null,
+    "gateOnCI": false
+  },
+  "pipeline": {
+    "stages": ["create-feature", "approve-spec", "implement-feature", "generate-tests", "review-feature"],
+    "modules": [
+      { "name": "AuthUserManagement", "folder": "auth-user-management", "priority": "P0" },
+      { "name": "ContactManagement", "folder": "contact-management", "priority": "P0" },
+      { "name": "CompanyManagement", "folder": "company-management", "priority": "P0" },
+      { "name": "LeadManagement", "folder": "lead-management", "priority": "P0" },
+      { "name": "DealPipelineManagement", "folder": "deal-pipeline-management", "priority": "P0" },
+      { "name": "ActivityTaskTracking", "folder": "activity-task-tracking", "priority": "P0" },
+      { "name": "Notes", "folder": "notes", "priority": "P1" },
+      { "name": "BasicReports", "folder": "basic-reports", "priority": "P1" }
+    ]
+  },
+  "invariants": [
+    "no-code-before-approved-spec",
+    "no-hard-deletes",
+    "org-scoped-queries",
+    "uuid-pks",
+    "org-id-from-jwt-only",
+    "standard-response-envelope",
+    "role-restricted-ui-hidden"
+  ],
+  "mcp": {
+    "neon": {
+      "package": "@neondatabase/mcp-server-neon",
+      "envVar": "NEON_API_KEY"
+    }
+  },
+  "configuredAt": "2026-06-16"
+}

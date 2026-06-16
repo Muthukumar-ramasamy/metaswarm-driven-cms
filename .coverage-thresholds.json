@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Coverage thresholds enforced by orchestrator agents before task completion. Scope: backend/src/modules + lib + middleware (excludes bootstrap, config, db schema, frontend). Run: vitest run --coverage --coverage.include='backend/src/modules/**/*.ts' --coverage.include='backend/src/lib/**/*.ts' --coverage.include='backend/src/middleware/**/*.ts' --coverage.exclude='**/__tests__/**'",
+  "thresholds": {
+    "lines": 65,
+    "branches": 70,
+    "functions": 50,
+    "statements": 65
+  },
+  "enforcement": {
+    "command": "vitest run --coverage --coverage.include='backend/src/modules/**/*.ts' --coverage.include='backend/src/lib/**/*.ts' --coverage.include='backend/src/middleware/**/*.ts' --coverage.exclude='**/__tests__/**'",
+    "blockPRCreation": true,
+    "blockTaskCompletion": true,
+    "description": "Orchestrator agents MUST run this command and verify all thresholds pass before marking any task complete or creating a PR. Thresholds reflect Phase 1 baseline (service + repository layers at 100%, controller/routes/middleware/schemas untested). Raise thresholds per-module as HTTP-level tests are added."
+  },
+  "history": {
+    "auth-phase1": {
+      "lines": 66.87,
+      "branches": 72,
+      "functions": 53.33,
+      "statements": 66.87,
+      "note": "service.ts + repository.ts = 100%. controller, routes, schemas, middleware = 0% — no HTTP-level tests in Phase 1."
+    }
+  }
+}

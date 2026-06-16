@@ -1,0 +1,16 @@
+{
+  "name": "crm",
+  "private": true,
+  "scripts": {
+    "setup": "npm install && npm --prefix backend install && npm --prefix frontend install",
+    "dev": "concurrently --names BE,FE --prefix-colors cyan,magenta \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^1.6.0",
+    "concurrently": "^8.2.2",
+    "vitest": "^1.6.0"
+  }
+}

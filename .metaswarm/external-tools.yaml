@@ -1,0 +1,15 @@
+version: "1"
+
+tools:
+  codex:
+    enabled: true
+    model: gpt-5.5
+    use_cases:
+      - plan_cross_review
+      - wu_code_review
+    notes: >
+      Cross-model adversarial review. Used before execution starts (plan review)
+      and optionally per work unit after implementation (code review).
+
+  gemini:
+    enabled: false
